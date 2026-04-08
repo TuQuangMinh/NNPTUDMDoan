@@ -1,6 +1,8 @@
 const Task = require("../models/taskModel");
 const Log = require("../models/logModel");
 const Team = require("../models/teamModel");
+const Notification = require("../models/notificationModel");
+const User = require("../models/userModel");
 
 exports.getDeadlineAlerts = async (req, res) => {
   try {
@@ -217,6 +219,20 @@ exports.createTask = async (req, res) => {
       details: "Đã tạo task mới"
     });
 
+    // Tạo notification cho assignee nếu có
+    if (assigneeId && assigneeId !== req.user.id) {
+      const notification = await Notification.create({
+        userId: assigneeId,
+        title: "Bạn được gán một task mới",
+        message: `Task "${title}" đã được gán cho bạn`,
+        type: "task",
+        link: `/tasks/${task._id}`
+      });
+
+      const io = req.app.get("io");
+      io.to(assigneeId.toString()).emit("notification", notification);
+    }
+
     res.status(201).json(task);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -226,12 +242,26 @@ exports.createTask = async (req, res) => {
 exports.updateTask = async (req, res) => {
   try {
     const isAdmin = req.user.role === 'admin';
+    const userId = req.user.id;
+    
+    // Get user's teams for team access check
+    const userTeams = await Team.find({ "members.userId": userId }).select("_id");
+    const teamIds = userTeams.map(t => t._id.toString());
     
     let query;
     if (isAdmin) {
       query = { _id: req.params.id, isDeleted: false };
     } else {
-      query = { _id: req.params.id, userId: req.user.id, isDeleted: false };
+      // Allow task owner, assignee, or team member to update
+      query = { 
+        _id: req.params.id, 
+        isDeleted: false,
+        $or: [
+          { userId: userId },
+          { assigneeId: userId },
+          { teamId: { $in: teamIds } }
+        ]
+      };
     }
 
     const oldTask = await Task.findOne(query);
@@ -269,6 +299,20 @@ exports.updateTask = async (req, res) => {
       details.push("Đã thay đổi Deadline");
       changesObj.push({ field: "Hạn chót", old: oldTask.deadline, new: task.deadline });
     }
+    // Log team change
+    if (req.body.teamId !== undefined && oldTask.teamId?.toString() !== req.body.teamId) {
+      const oldTeamName = oldTask.teamId ? await Team.findById(oldTask.teamId).then(t => t?.name || "Không có") : "Không có";
+      const newTeamName = req.body.teamId ? await Team.findById(req.body.teamId).then(t => t?.name || "Không xác định") : "Không có";
+      details.push(`Nhóm: ${oldTeamName} ➔ ${newTeamName}`);
+      changesObj.push({ field: "Nhóm", old: oldTeamName, new: newTeamName });
+    }
+    // Log assignee change
+    if (req.body.assigneeId !== undefined && oldTask.assigneeId?.toString() !== req.body.assigneeId) {
+      const oldAssignee = oldTask.assigneeId ? await User.findById(oldTask.assigneeId).then(u => u?.username || "Chưa giao") : "Chưa giao";
+      const newAssignee = req.body.assigneeId ? await User.findById(req.body.assigneeId).then(u => u?.username || "Không xác định") : "Chưa giao";
+      details.push(`Người thực hiện: ${oldAssignee} ➔ ${newAssignee}`);
+      changesObj.push({ field: "Người thực hiện", old: oldAssignee, new: newAssignee });
+    }
 
     const changeText = details.length > 0 ? "Thay đổi: " + details.join(", ") : "Cập nhật thông tin task";
 
@@ -280,6 +324,22 @@ exports.updateTask = async (req, res) => {
         details: changeText,
         changes: changesObj
       });
+    }
+
+    // Tạo notification nếu đổi assignee
+    if (req.body.assigneeId && 
+        oldTask.assigneeId?.toString() !== req.body.assigneeId && 
+        req.body.assigneeId !== req.user.id) {
+      const notification = await Notification.create({
+        userId: req.body.assigneeId,
+        title: "Bạn được gán một task",
+        message: `Task "${task.title}" đã được gán cho bạn`,
+        type: "task",
+        link: `/tasks/${task._id}`
+      });
+
+      const io = req.app.get("io");
+      io.to(req.body.assigneeId.toString()).emit("notification", notification);
     }
 
     res.json(task);
