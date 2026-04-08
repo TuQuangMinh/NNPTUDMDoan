@@ -1,10 +1,6 @@
 const mongoose = require("mongoose");
 
-const logSchema = new mongoose.Schema({
-  action: {
-    type: String,
-    required: true
-  },
+const timeLogSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
@@ -13,15 +9,24 @@ const logSchema = new mongoose.Schema({
   taskId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "Task",
+    required: true
+  },
+  startTime: {
+    type: Date,
+    required: true,
+    default: Date.now
+  },
+  endTime: {
+    type: Date,
     default: null
   },
-  details: {
+  duration: {
+    type: Number, // Phút
+    default: 0
+  },
+  note: {
     type: String,
     default: ""
-  },
-  changes: {
-    type: Array,
-    default: []
   },
   createdAt: {
     type: Date,
@@ -29,4 +34,4 @@ const logSchema = new mongoose.Schema({
   }
 });
 
-module.exports = mongoose.model("Log", logSchema);
+module.exports = mongoose.model("TimeLog", timeLogSchema);
